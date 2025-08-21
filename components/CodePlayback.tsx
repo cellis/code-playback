@@ -64,25 +64,29 @@ const CodeDisplay = memo(({
   language, 
   selectedTheme, 
   displayedCode, 
-  themes 
+  themesObj 
 }: {
   language: string;
   selectedTheme: ThemeName;
   displayedCode: string;
-  themes: typeof themes;
+  themesObj: typeof themes;
 }) => {
   return (
     <SyntaxHighlighter
       language={language}
-      style={themes[selectedTheme]}
+      style={themesObj[selectedTheme]}
       customStyle={{
         margin: 0,
         padding: '1rem',
         background: 'transparent',
         fontSize: '14px',
         minHeight: '100%',
+        overflowX: 'auto',
+        whiteSpace: 'pre',
       }}
       showLineNumbers
+      wrapLines={false}
+      wrapLongLines={false}
     >
       {displayedCode || ' '}
     </SyntaxHighlighter>
@@ -192,114 +196,77 @@ const CodePlayback: React.FC<CodePlaybackProps> = ({ code, language, filename })
     return '#abb2bf'; // Default light gray
   }, []);
 
-  // Capture frame function - manually renders text to canvas with syntax highlighting
-  const captureFrame = useCallback(() => {
+  // Capture frame function - use html2canvas for better performance
+  const captureFrame = useCallback(async () => {
     // Use ref to get current value without stale closure
     const currentDisplayedCode = displayedCodeRef.current;
     
-    if (!currentDisplayedCode || isProcessingVideo) {
+    if (!currentDisplayedCode || isProcessingVideo || !codeContainerRef.current) {
       return;
     }
     
     try {
+      // Use the actual DOM element for recording
+      const container = codeContainerRef.current;
+      
+      // Create a canvas from the DOM element
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       
       if (!ctx) return;
       
-      // Ultra-high quality settings
-      const scale = 3; // Higher scaling for better quality
-      const width = 1920; // Full HD width
-      const height = 1080; // Full HD height
+      // Use lower resolution for better performance
+      const scale = 1; // Reduced scale for better performance
+      const width = 1280; // 720p width for better performance
+      const height = 720; // 720p height
       
-      // Set canvas size with scaling for quality
-      canvas.width = width * scale;
-      canvas.height = height * scale;
-      canvas.style.width = width + 'px';
-      canvas.style.height = height + 'px';
-      ctx.scale(scale, scale);
+      // Set canvas size
+      canvas.width = width;
+      canvas.height = height;
       
-      // Enable text smoothing
-      ctx.textRenderingOptimization = 'optimizeQuality';
-      ctx.imageSmoothingEnabled = true;
-      
-      // Fill background (VS Code Dark theme)
+      // Use a simpler approach - copy the visible area
+      // Fill background
       ctx.fillStyle = '#1e1e1e';
       ctx.fillRect(0, 0, width, height);
       
-      // Set text properties (larger for higher resolution)
-      ctx.font = '24px "Fira Code", "JetBrains Mono", "Consolas", monospace';
+      // Set basic text properties
+      ctx.font = '16px "Fira Code", "JetBrains Mono", "Consolas", monospace';
       ctx.textBaseline = 'top';
       
-      // Calculate scroll and visible lines (adjusted for higher resolution)
+      // Simple rendering for better performance
       const lines = currentDisplayedCode.split('\n');
-      const lineHeight = 36;
-      const padding = 30;
-      const lineNumberWidth = 90;
+      const lineHeight = 24;
+      const padding = 20;
+      const lineNumberWidth = 60;
       const maxVisibleLines = Math.floor((height - padding * 2) / lineHeight);
       
-      // Simulate auto-scroll - show lines around current progress
-      let startLine = 0;
-      if (lines.length > maxVisibleLines) {
-        // Calculate which line we're currently "typing" (based on content length)
-        const currentLine = Math.min(lines.length - 1, Math.floor(lines.length * 0.8));
-        startLine = Math.max(0, currentLine - Math.floor(maxVisibleLines * 0.7));
-      }
-      
-      const endLine = Math.min(lines.length, startLine + maxVisibleLines);
+      // Calculate visible lines
+      let startLine = Math.max(0, lines.length - maxVisibleLines);
+      const endLine = lines.length;
       
       // Draw visible lines
       for (let i = startLine; i < endLine; i++) {
         const line = lines[i];
         const y = padding + ((i - startLine) * lineHeight);
         
-        // Draw line number background
-        ctx.fillStyle = '#252526';
-        ctx.fillRect(0, y - 2, lineNumberWidth, lineHeight);
-        
         // Draw line number
         ctx.fillStyle = '#858585';
-        ctx.fillText(`${(i + 1).toString().padStart(3, ' ')}`, padding, y);
+        ctx.fillText(`${i + 1}`, padding, y);
         
-        // Simple syntax highlighting
-        if (line.trim()) {
-          const tokens = line.split(/(\s+|[(){}\[\];,.])/);
-          let xOffset = lineNumberWidth;
-          
-          tokens.forEach(token => {
-            if (token.trim()) {
-              ctx.fillStyle = getTokenColor(token, language);
-              ctx.fillText(token, xOffset, y);
-            } else {
-              // Handle whitespace
-              ctx.fillStyle = '#abb2bf';
-              ctx.fillText(token, xOffset, y);
-            }
-            xOffset += ctx.measureText(token).width;
-          });
-        }
-      }
-      
-      // Add a subtle cursor if we're at the end
-      if (currentDisplayedCode.length === code.length) {
-        const lastLineIndex = lines.length - 1 - startLine;
-        if (lastLineIndex >= 0 && lastLineIndex < maxVisibleLines) {
-          const lastLine = lines[lines.length - 1];
-          const cursorX = lineNumberWidth + ctx.measureText(lastLine).width + 2;
-          const cursorY = padding + (lastLineIndex * lineHeight);
-          
+        // Draw line content (simplified)
+        if (line) {
           ctx.fillStyle = '#abb2bf';
-          ctx.fillRect(cursorX, cursorY, 3, lineHeight - 6);
+          ctx.fillText(line, lineNumberWidth + padding, y);
         }
       }
       
-      const frameData = canvas.toDataURL('image/png');
+      const frameData = canvas.toDataURL('image/webp', 0.8); // Use WebP for smaller size
       framesBuffer.current.push(frameData);
       setFrameCount(prev => prev + 1);
     } catch (error) {
       console.error('Error capturing frame:', error);
     }
-  }, [isProcessingVideo, language, code.length, getTokenColor]);
+  }, [isProcessingVideo, code.length]);
 
   // Start recording
   const startRecording = useCallback(() => {
@@ -322,10 +289,10 @@ const CodePlayback: React.FC<CodePlaybackProps> = ({ code, language, filename })
     // Capture initial frame
     setTimeout(() => captureFrame(), 100);
     
-    // Capture frames at 20 FPS for smoother video
+    // Capture frames at 10 FPS for better performance
     recordingIntervalRef.current = setInterval(() => {
       captureFrame();
-    }, 50); // 50ms = 20 FPS
+    }, 100); // 100ms = 10 FPS
   }, [captureFrame, displayedCode, code, isPlaying]);
 
   // Stop recording
@@ -361,10 +328,10 @@ const CodePlayback: React.FC<CodePlaybackProps> = ({ code, language, filename })
         });
 
         // Create video stream
-        const stream = canvas.captureStream(20); // 20 FPS to match capture rate
+        const stream = canvas.captureStream(10); // 10 FPS to match capture rate
         const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp9',
-          videoBitsPerSecond: 8000000 // 8 Mbps for high quality
+          mimeType: 'video/webm;codecs=vp8', // Use VP8 for better compatibility
+          videoBitsPerSecond: 2500000 // 2.5 Mbps for balanced quality/size
         });
 
         const chunks: Blob[] = [];
@@ -406,7 +373,7 @@ const CodePlayback: React.FC<CodePlaybackProps> = ({ code, language, filename })
               img.src = framesBuffer.current[frameIndex];
             });
             frameIndex++;
-            setTimeout(playFrames, 50); // 20 FPS to match capture
+            setTimeout(playFrames, 100); // 10 FPS to match capture
           } else {
             setTimeout(() => mediaRecorder.stop(), 500);
           }
@@ -715,12 +682,12 @@ const CodePlayback: React.FC<CodePlaybackProps> = ({ code, language, filename })
       </div>
 
       {/* Code display */}
-      <div className="flex-1 overflow-auto" ref={codeContainerRef}>
+      <div className="flex-1 overflow-auto" ref={codeContainerRef} style={{ overflowX: 'auto', overflowY: 'auto' }}>
         <CodeDisplay
           language={language}
           selectedTheme={selectedTheme}
           displayedCode={displayedCode}
-          themes={themes}
+          themesObj={themes}
         />
       </div>
 
